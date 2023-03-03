@@ -1,7 +1,7 @@
 #include "xparameters.h"
 #include "xgpio.h"
 #include "xscugic.h"
-#include "xtmrctr.h"
+//#include "xtmrctr.h"
 #include "xuartps.h"
 #include "xil_exception.h"
 #include "xil_printf.h"
@@ -10,6 +10,9 @@
 #include "xil_types.h"
 #include <sleep.h>
 #include <cstdlib>
+#include "platform.h"
+#include "platform_config.h"
+#include "ethernet.h"
 
 // Definitions, constants, global variables
 #define INTC_DEVICE_ID 			XPAR_PS7_SCUGIC_0_DEVICE_ID
@@ -88,6 +91,7 @@ void setupP2ShipPlacement(ship* ships);
 void attackPos(ship* ships, coord coord);
 coord getP1AttackPos();
 coord getP2AttackPos();
+coord getAttackPos();
 bool isDestroyed(ship* ships);
 void updateCrosshair(coord coords);
 void drawBox(int offset, int color);
@@ -192,6 +196,8 @@ int initIntcFunction(u16 DeviceId, XGpio *GpioInstancePtr)
 					  	  	 (void *)GpioInstancePtr);
 	if(status != XST_SUCCESS) return XST_FAILURE;
 
+	eth_init();
+
 	// Enable GPIO interrupts interrupt
 	XGpio_InterruptEnable(GpioInstancePtr, 1);
 	XGpio_InterruptGlobalEnable(GpioInstancePtr);
@@ -232,6 +238,9 @@ void initVGA()
 	// dow -data ../../../../Pictures/title.data 0x018D2008
 	// dow -data ../../../../Pictures/options.data 0x020BB00C
 	// dow -data ../../../../Pictures/board.data 0x028A4010
+
+	// dow -data ../../../../Users/arodillo/ensc452/battleship/images/title.data 0x018D2008
+
 	Xil_DCacheFlush();
 }
 
@@ -242,20 +251,26 @@ int displayMainMenu()
 	updateCursor(cursor);
 
 	while(1) {
-		while(BTN_INTR_FLAG == false);
-		BTN_INTR_FLAG = false;
+		eth_loop();
+//		while(BTN_INTR_FLAG == false);
+//		BTN_INTR_FLAG = false;
 
-		if (BTN_VAL == 16){ 		// up
-			(cursor == 0) ? cursor = 2 : cursor--;
-			updateCursor(cursor);
-		}
-		else if (BTN_VAL == 2){ 	// down
-			cursor = (cursor + 1) % 3;
-			updateCursor(cursor);
-		}
-		else if (BTN_VAL == 1){		// center
-			usleep(BTN_DELAY);
-			return cursor;
+		if (BTN_INTR_FLAG == true)
+		{
+			BTN_INTR_FLAG = false;
+
+			if (BTN_VAL == 16){ 		// up
+				(cursor == 0) ? cursor = 2 : cursor--;
+				updateCursor(cursor);
+			}
+			else if (BTN_VAL == 2){ 	// down
+				cursor = (cursor + 1) % 3;
+				updateCursor(cursor);
+			}
+			else if (BTN_VAL == 1){		// center
+				usleep(BTN_DELAY);
+				return cursor;
+			}
 		}
 	}
 
@@ -329,7 +344,8 @@ int playGame()
 	while (!game_end){
 		// player 1 attack
 		xil_printf("Player 1's turn\r\n");
-		attackPos(p2_ships, getP1AttackPos());
+//		attackPos(p2_ships, getP1AttackPos());
+		attackPos(p2_ships, getAttackPos());
 		if (isDestroyed(p2_ships)){
 			winner = 1;
 			game_end = true;
@@ -339,7 +355,8 @@ int playGame()
 		// player 2 attack
 		xil_printf("Player 2's turn\r\n");
 		sleep(2);
-		attackPos(p1_ships, getP2AttackPos());
+//		attackPos(p1_ships, getP2AttackPos());
+		attackPos(p1_ships, getAttackPos());
 		if (isDestroyed(p1_ships)){
 			winner = 2;
 			game_end = true;
@@ -421,7 +438,12 @@ coord getP1AttackPos()
 	coords.y = 0;
 	updateCrosshair(coords);
 	while(1) {
-			while(BTN_INTR_FLAG == false);
+//			while(BTN_INTR_FLAG == false);
+//			BTN_INTR_FLAG = false;
+
+		eth_loop();
+		if (BTN_INTR_FLAG)
+		{
 			BTN_INTR_FLAG = false;
 
 			if (BTN_VAL == 16){ 		// up
@@ -441,9 +463,11 @@ coord getP1AttackPos()
 				updateCrosshair(coords);
 			}
 			else if (BTN_VAL == 1){		// centre
+				transfer_data(coords.x, coords.y);
 				return coords;
 			}
 		}
+	}
 	return coords;
 }
 
@@ -454,6 +478,44 @@ coord getP2AttackPos()
 	coord coords;
 	coords.x = 0;
 	coords.y = 0;
+	return coords;
+}
+
+coord getAttackPos()
+{
+	coord coords;
+	coords.x = 0;
+	coords.y = 0;
+	updateCrosshair(coords);
+	while(1) {
+		eth_loop();
+
+		if (BTN_INTR_FLAG)
+		{
+			BTN_INTR_FLAG = false;
+
+			if (BTN_VAL == 16){ 		// up
+				(coords.y == 0) ? coords.y = 9 : coords.y--;
+				updateCrosshair(coords);
+			}
+			else if (BTN_VAL == 2){ 	// down
+				coords.y = (coords.y + 1) % 10;
+				updateCrosshair(coords);
+			}
+			else if (BTN_VAL == 4){		// left
+				(coords.x == 0) ? coords.x = 9 : coords.x--;
+				updateCrosshair(coords);
+			}
+			else if (BTN_VAL == 8){		// right
+				coords.x = (coords.x + 1) % 10;
+				updateCrosshair(coords);
+			}
+			else if (BTN_VAL == 1){		// centre
+				transfer_data(coords.x, coords.y);
+				return coords;
+			}
+		}
+	}
 	return coords;
 }
 
