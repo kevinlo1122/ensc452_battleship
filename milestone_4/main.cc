@@ -75,6 +75,8 @@ struct ship{
 	coord coords[5];
 };
 
+coord curr;
+
 
 
 //----------------------------------------------------
@@ -107,8 +109,10 @@ coord getP1AttackPos();
 coord getP2AttackPos();
 coord getAttackPos();
 bool isDestroyed(ship* ships);
+void drawEmptyBoard();
 void updateCrosshair(coord coords);
 void drawBox(int offset, int color);
+void drawSmallerBox(int offset, int color);
 
 bool updateShip(coord coords, int color, int size, bool side, char* board);
 void getShipPos(coord* coords, int size, char* board);
@@ -389,6 +393,9 @@ int playGame()
 	// Take turns shooting
 	bool game_end = false;
 	playing_game = 1;
+	curr.x = 0;
+	curr.y = 0;
+	drawEmptyBoard();
 	while (!game_end) {
 
 		// Player 1 moves first
@@ -400,9 +407,9 @@ int playGame()
 
 			// send target to player 2
 			send_coords(target.x, target.y);
+			drawBox(147 + 13*1280 + curr.x*100 + 1280*100*curr.y, BLACK);
 
 			// wait for result of move
-			// TODO
 			while (!msg_received)
 				eth_loop();
 			msg_received = 0;
@@ -420,12 +427,11 @@ int playGame()
 				continue;
 			case 'e':
 				// Empty square
-				break;
-			case 'd':
-				// Ship was destroyed
+				drawSmallerBox(149 + 15*1280 + curr.x*100 + 1280*100*curr.y, GREEN);
 				break;
 			case 'h':
 				// Ship was hit
+				drawSmallerBox(149 + 15*1280 + curr.x*100 + 1280*100*curr.y, RED);
 				break;
 			} // switch
 
@@ -453,9 +459,6 @@ int playGame()
 					send_result('e');
 					break;
 				case 1:
-					send_result('d');
-					break;
-				case 2:
 					send_result('h');
 					break;
 				} // switch
@@ -488,9 +491,6 @@ int playGame()
 					send_result('e');
 					break;
 				case 1:
-					send_result('d');
-					break;
-				case 2:
 					send_result('h');
 					break;
 				} // switch
@@ -504,9 +504,9 @@ int playGame()
 
 			// send target to player 1
 			send_coords(target.x, target.y);
+			drawBox(147 + 13*1280 + curr.x*100 + 1280*100*curr.y, BLACK);
 
 			// wait for result of move
-			// TODO
 			while (!msg_received)
 				eth_loop();
 			msg_received = 0;
@@ -524,12 +524,11 @@ int playGame()
 				continue;
 			case 'e':
 				// Empty square
-				break;
-			case 'd':
-				// Ship was destroyed
+				drawSmallerBox(149 + 15*1280 + curr.x*100 + 1280*100*curr.y, GREEN);
 				break;
 			case 'h':
 				// Ship was hit
+				drawSmallerBox(149 + 15*1280 + curr.x*100 + 1280*100*curr.y, RED);
 				break;
 			}
 
@@ -590,15 +589,13 @@ int attackPos(ship* ships, coord coord)
 				{
 					ships[i].is_destroyed = true;
 					xil_printf("A ship has been destroyed!\n\r");
-					return 1;
 				}
 				else
 				{
 					xil_printf("A ship has been hit\n\r");
-					return 2;
 				}
 				
-				return true;
+				return 1;
 			}
 		}
 	}
@@ -679,15 +676,27 @@ void updateCursor(int cursor)
 	usleep(BTN_DELAY);
 }
 
-void updateCrosshair(coord coords)
+void drawEmptyBoard()
 {
 	for(int i = 0; i < 10; i++){
 		for(int j = 0; j < 10; j++){
 			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK);
 		}
 	}
+}
+
+void updateCrosshair(coord coords)
+{
+//	for(int i = 0; i < 10; i++){
+//		for(int j = 0; j < 10; j++){
+//			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK);
+//		}
+//	}
+	drawBox(147 + 13*1280 + curr.x*100 + 1280*100*curr.y, BLACK);
 	drawBox(147 + 13*1280 + coords.x*100 + 1280*100*coords.y, RED);
 	usleep(BTN_DELAY);
+	curr.x = coords.x;
+	curr.y = coords.y;
 }
 
 void drawBox(int offset, int color)
@@ -704,6 +713,28 @@ void drawBox(int offset, int color)
 		image_buffer_pointer[offset + 1 + 1280*i] = color;
 		image_buffer_pointer[offset + 93 + 1280*i] = color;
 		image_buffer_pointer[offset + 94 + 1280*i] = color;
+	}
+	Xil_DCacheFlush();
+}
+
+void drawSmallerBox(int offset, int color)
+{
+	for(int i = 0; i < 90; i++){
+		image_buffer_pointer[offset + i] = color;
+		image_buffer_pointer[offset + 1280 + i] = color;
+		image_buffer_pointer[offset + 1280*2 + i] = color;
+		image_buffer_pointer[offset + 88*1280 + i] = color;
+		image_buffer_pointer[offset + 89*1280 + i] = color;
+		image_buffer_pointer[offset + 90*1280 + i] = color;
+	}
+
+	for(int i = 0; i < 90; i++){
+		image_buffer_pointer[offset + 1280*i] = color;
+		image_buffer_pointer[offset + 1 + 1280*i] = color;
+		image_buffer_pointer[offset + 2 + 1280*i] = color;
+		image_buffer_pointer[offset + 88 + 1280*i] = color;
+		image_buffer_pointer[offset + 89 + 1280*i] = color;
+		image_buffer_pointer[offset + 90 + 1280*i] = color;
 	}
 	Xil_DCacheFlush();
 }
