@@ -481,13 +481,13 @@ int eth_init(char player)
 
 
 	xil_printf("Configured as player %c\n\r", player);
-	xil_printf("Press 's' to start application...\n\r");
-
-	u8 input = 0x00;
-	while (input != 's') {
-		while (!XUartPs_IsReceiveData(UART_BASEADDR));
-		input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
-	}
+//	xil_printf("Press 's' to start application...\n\r");
+//
+//	u8 input = 0x00;
+//	while (input != 's') {
+//		while (!XUartPs_IsReceiveData(UART_BASEADDR));
+//		input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
+//	}
 
 	/* start the application */
 	if (player == '1') {
