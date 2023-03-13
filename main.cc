@@ -8,14 +8,19 @@
 #include "xil_cache.h"
 #include "xil_io.h"
 #include "xil_types.h"
+#include <stdlib.h>
+#include <time.h>
 #include <sleep.h>
 #include <cstdlib>
+#include <xgpiops.h>
 
 // Definitions, constants, global variables
 #define INTC_DEVICE_ID 			XPAR_PS7_SCUGIC_0_DEVICE_ID
 #define BTNS_DEVICE_ID			XPAR_AXI_GPIO_0_DEVICE_ID
 #define INTC_GPIO_INTERRUPT_ID 	XPAR_FABRIC_AXI_GPIO_0_IP2INTC_IRPT_INTR
 #define BTN_INT 				XGPIO_IR_CH1_MASK
+
+#define pbsw 51
 
 #define NUM_SHIPS				5
 #define CARRIER					5
@@ -26,11 +31,11 @@
 #define EMPTY					0
 
 #define NUM_BYTES_BUFFER		5242880
-#define RED						0xFF
-#define GREEN	 				0xFF00
-#define BLUE 					0xFF0000
-#define WHITE	 				0xFFFFFF
-#define BLACK	 				0x000000
+#define RED						0x003333FF
+#define GREEN	 				0x0000FF00
+#define BLUE 					0x00FFBB00
+#define WHITE	 				0x00FFFFFF
+#define BLACK	 				0xFF000000
 
 #define BTN_DELAY				200000
 
@@ -38,13 +43,16 @@ XGpio BTN_INST;
 XScuGic INTC_INST;
 volatile bool BTN_INTR_FLAG;
 static int BTN_VAL;
+long unsigned int sw;
+XGpioPs Gpio;
+XGpioPs_Config *GPIOConfigPtr;
 
 int * image_buffer_pointer 	= (int *)0x00900000;
 int * main_menu 			= (int *)0x018D2008;
 int * options 				= (int *)0x020BB00C;
 int * board			 		= (int *)0x028A4010;
-int * image4_pointer 		= (int *)0x0308D014;
-int * image5_pointer 		= (int *)0x03876018;
+int * sprites		 		= (int *)0x0308D014;
+int * confetti		 		= (int *)0x03876018;
 
 int p1_score = 0;
 int p2_score = 0;
@@ -56,6 +64,7 @@ struct coord{
 };
 struct ship{
 	int type;
+	int lives;
 	bool is_destroyed;
 	coord coords[5];
 };
@@ -90,10 +99,18 @@ coord getP1AttackPos();
 coord getP2AttackPos();
 bool isDestroyed(ship* ships);
 void updateCrosshair(coord coords);
-void drawBox(int offset, int color);
+void drawBox(int offset, int color, bool cross);
 
 bool updateShip(coord coords, int color, int size, bool side, char* board);
 void getP1ShipPos(coord* coords, int size, char* board);
+void drawExplosion(coord coords);
+void drawMiss(coord coords);
+void drawHit(coord coords);
+void drawSinkingShip(ship ship);
+void drawConfetti();
+void drawVictory();
+void drawDefeat();
+
 
 
 //----------------------------------------------------
@@ -112,6 +129,11 @@ int main (void)
 	if(status != XST_SUCCESS) return XST_FAILURE;
 	// Set all buttons direction to inputs
 	XGpio_SetDataDirection(&BTN_INST, 1, 0xFF);
+
+	GPIOConfigPtr = XGpioPs_LookupConfig(XPAR_PS7_GPIO_0_DEVICE_ID);
+	status = XGpioPs_CfgInitialize(&Gpio, GPIOConfigPtr, GPIOConfigPtr ->BaseAddr);
+	if (status != XST_SUCCESS) return XST_FAILURE;
+    XGpioPs_SetDirectionPin(&Gpio, pbsw, 0x0);
 
 	// Initialize connection to secondary board
 	status = initSecondaryBoard();
@@ -237,6 +259,8 @@ void initVGA()
 	// dow -data ../../../../Pictures/title.data 0x018D2008
 	// dow -data ../../../../Pictures/options.data 0x020BB00C
 	// dow -data ../../../../Pictures/board.data 0x028A4010
+	// dow -data ../../../../Pictures/sprites.data 0x0308D014
+	// dow -data ../../../../Pictures/victory.data 0x03876018
 	Xil_DCacheFlush();
 }
 
@@ -313,9 +337,7 @@ int playGame()
 	// Initialize board for player 2
 	char* p2_board = (char*) malloc(10*10*sizeof(char));
 	memset(p2_board, 0, 10*10*sizeof(char));
-
 	memcpy(image_buffer_pointer, board, NUM_BYTES_BUFFER);
-	Xil_DCacheFlush();
 
 	// Player 1 ships
 	ship* p1_ships = (ship*) malloc(5*sizeof(ship));
@@ -335,7 +357,8 @@ int playGame()
 		// player 1 attack
 		xil_printf("Player 1's turn\r\n");
 		attackPos(p1_ships, getP1AttackPos());
-		if (isDestroyed(p2_ships)){
+		if (isDestroyed(p1_ships)){
+			drawVictory();
 			winner = 1;
 			game_end = true;
 		}
@@ -343,7 +366,7 @@ int playGame()
 
 		// player 2 attack
 		xil_printf("Player 2's turn\r\n");
-		sleep(2);
+		sleep(1);
 //		attackPos(p1_ships, getP2AttackPos());
 //		if (isDestroyed(p1_ships)){
 //			winner = 2;
@@ -388,11 +411,17 @@ void setupP1ShipPlacement(ship* ships, char* board)
 	for(int i = 0; i < NUM_SHIPS; i++){
 		ships[i].is_destroyed = false;
 		ships[i].type = types[i];
+		ships[i].lives = types[i];
 		for(int j = 0; j < 5; j++){
 			ships[i].coords[j].x = -1;
 			ships[i].coords[j].y = -1;
 		}
 		getP1ShipPos(ships[i].coords, ships[i].type, board);
+	}
+	for(int i = 0; i < 10; i++){
+		for(int j = 0; j < 10; j++){
+			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK, true);
+		}
 	}
 }
 
@@ -416,12 +445,31 @@ void attackPos(ship* ships, coord coord)
 	// check if attack coord is occupied
 	// update values
 	xil_printf("%d, %d is attacked\r\n", coord.x, coord.y);
+	drawExplosion(coord);
+	bool hit = false;
 	for(int i = 0; i < NUM_SHIPS; i++){
 		for(int j = 0; j < 5; j++){
 			if (ships[i].coords[j].x == coord.x && ships[i].coords[j].y == coord.y){
-				xil_printf("HIT\r\n", coord.x, coord.y);
+				xil_printf("HIT\r\n");
+				hit = true;
+				ships[i].lives--;
+				if (ships[i].lives <= 0)
+				{
+					ships[i].is_destroyed = true;
+					xil_printf("A ship has been destroyed!\n\r");
+					drawHit(coord);
+					drawSinkingShip(ships[i]);
+					return;
+
+				}
 			}
 		}
+	}
+	if(hit){
+		drawHit(coord);
+	}
+	else{
+		drawMiss(coord);
 	}
 }
 
@@ -510,14 +558,14 @@ void updateCrosshair(coord coords)
 {
 	for(int i = 0; i < 10; i++){
 		for(int j = 0; j < 10; j++){
-			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK);
+			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK, false);
 		}
 	}
-	drawBox(147 + 13*1280 + coords.x*100 + 1280*100*coords.y, RED);
+	drawBox(147 + 13*1280 + coords.x*100 + 1280*100*coords.y, RED, false);
 	usleep(BTN_DELAY);
 }
 
-void drawBox(int offset, int color)
+void drawBox(int offset, int color, bool cross)
 {
 	for(int i = 0; i < 94; i++){
 		image_buffer_pointer[offset + i] = color;
@@ -532,6 +580,13 @@ void drawBox(int offset, int color)
 		image_buffer_pointer[offset + 93 + 1280*i] = color;
 		image_buffer_pointer[offset + 94 + 1280*i] = color;
 	}
+
+	if(cross){
+		for(int i = 0; i < 94; i++){
+			image_buffer_pointer[offset + i*1280 + i] = color;
+			image_buffer_pointer[offset + 94*1280 - i*1280 + i] = color;
+		}
+	}
 	Xil_DCacheFlush();
 }
 
@@ -541,13 +596,13 @@ bool updateShip(coord* coords, int color, int size, bool side, char* board)
 	int valid_color = color;
 	for(int i = 0; i < 10; i++){
 		for(int j = 0; j < 10; j++){
-			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK);
+			drawBox(147 + 13*1280 + i*100 + 1280*100*j, BLACK, true);
 		}
 	}
 
 	for(int i = 0; i < 100; i++){
 		if(board[i] != 0){
-			drawBox(147 + 13*1280 + (i%10)*100 + 1280*100*(i/10), BLUE);
+			drawBox(147 + 13*1280 + (i%10)*100 + 1280*100*(i/10), BLUE, true);
 		}
 	}
 	int x = 0;
@@ -568,8 +623,8 @@ bool updateShip(coord* coords, int color, int size, bool side, char* board)
 			x = x % 10;
 			coords[i].x = x;
 			coords[i].y = coords[0].y;
-			drawBox(147 + 13*1280 + coords[0].x*100 + 1280*100*coords[0].y, valid_color);
-			drawBox(147 + 13*1280 + (x)*100 + 1280*100*coords[0].y, valid_color);
+			drawBox(147 + 13*1280 + coords[0].x*100 + 1280*100*coords[0].y, valid_color, true);
+			drawBox(147 + 13*1280 + (x)*100 + 1280*100*coords[0].y, valid_color, true);
 		}
 		usleep(BTN_DELAY);
 	}
@@ -586,8 +641,8 @@ bool updateShip(coord* coords, int color, int size, bool side, char* board)
 			y = y % 10;
 			coords[i].y = y;
 			coords[i].x = coords[x].x;
-			drawBox(147 + 13*1280 + coords[0].x*100 + 1280*100*coords[0].y, valid_color);
-			drawBox(147 + 13*1280 + (coords[0].x)*100 + 1280*100*y, valid_color);
+			drawBox(147 + 13*1280 + coords[0].x*100 + 1280*100*coords[0].y, valid_color, true);
+			drawBox(147 + 13*1280 + (coords[0].x)*100 + 1280*100*y, valid_color, true);
 		}
 		usleep(BTN_DELAY);
 	}
@@ -604,18 +659,27 @@ void getP1ShipPos(coord* coords, int size, char* board)
 	valid = updateShip(coords, GREEN, size, side, board);
 	while(1) {
 			while(BTN_INTR_FLAG == false){
-				u8 inp = 0x00;
-				if (XUartPs_IsReceiveData(XPS_UART1_BASEADDR) && valid){
-					inp = XUartPs_ReadReg(XPS_UART1_BASEADDR, XUARTPS_FIFO_OFFSET);
-					if (inp == 'a'){
-						for(int i = 0; i < size; i++){
-							xil_printf("%d, %d \r\n" ,coords[i].x, coords[i].y);
-							board[10*coords[i].y + coords[i].x] = 1;
-						}
-						xil_printf("\r\n");
-						return;
+//				u8 inp = 0x00;
+//				if (XUartPs_IsReceiveData(XPS_UART1_BASEADDR) && valid){
+//					inp = XUartPs_ReadReg(XPS_UART1_BASEADDR, XUARTPS_FIFO_OFFSET);
+//					if (inp == 'a'){
+//						for(int i = 0; i < size; i++){
+//							xil_printf("%d, %d \r\n" ,coords[i].x, coords[i].y);
+//							board[10*coords[i].y + coords[i].x] = 1;
+//						}
+//						xil_printf("\r\n");
+//						return;
+//					}
+//				}
+		    	sw = XGpioPs_ReadPin(&Gpio, pbsw); //read pin
+		    	if (sw == 1 && valid){
+					for(int i = 0; i < size; i++){
+						xil_printf("%d, %d \r\n" ,coords[i].x, coords[i].y);
+						board[10*coords[i].y + coords[i].x] = 1;
 					}
-				}
+					xil_printf("\r\n");
+					return;
+		    	}
 			}
 			BTN_INTR_FLAG = false;
 
@@ -641,3 +705,110 @@ void getP1ShipPos(coord* coords, int size, char* board)
 			}
 		}
 }
+
+void drawExplosion(coord coords)
+{
+	int offset = 147 + 13*1280 + coords.x*100 + 1280*100*coords.y;
+	for(int k = 0; k < 4; k++){
+		for(int j = 0; j < 95; j++){
+			for(int i = 0; i < 95; i++){
+				image_buffer_pointer[offset+i+j*1280] = sprites[i+j*1280+95*k];
+			}
+		}
+		Xil_DCacheFlush();
+		usleep(85000);
+	}
+}
+
+void drawMiss(coord coords)
+{
+	int offset = 147 + 13*1280 + coords.x*100 + 1280*100*coords.y;
+	for(int j = 0; j < 95; j++){
+		for(int i = 0; i < 95; i++){
+			image_buffer_pointer[offset+i+j*1280] = sprites[i+j*1280+95*4];
+		}
+	}
+	Xil_DCacheFlush();
+}
+
+void drawHit(coord coords)
+{
+	int rand_num = rand() % 2;
+	int offset = 147 + 13*1280 + coords.x*100 + 1280*100*coords.y;
+	for(int j = 0; j < 95; j++){
+		for(int i = 0; i < 95; i++){
+			image_buffer_pointer[offset+i+j*1280] = sprites[i+j*1280+95*(5+rand_num)];
+		}
+	}
+	Xil_DCacheFlush();
+}
+
+void drawSinkingShip(ship ship)
+{
+	for(int i = 0; i < ship.type; i++){
+		int offset = 147 + 13*1280 + ship.coords[i].x*100 + 1280*100*ship.coords[i].y;
+		for(int k = 0; k < 5; k++){
+			for(int j = 0; j < 95; j++){
+				for(int i = 0; i < 95; i++){
+					image_buffer_pointer[offset+i+j*1280] = sprites[i+j*1280+95*k+1280*95];
+				}
+			}
+			Xil_DCacheFlush();
+			usleep(85000);
+		}
+	}
+}
+
+void drawConfetti()
+{
+	for(int i = 0; i < NUM_BYTES_BUFFER / 4; ++i){
+		if(confetti[i] != (int) BLACK){  // black?
+			image_buffer_pointer[i] = confetti[i];
+		}
+	}
+	Xil_DCacheFlush();
+}
+
+void drawVictory()
+{
+	drawConfetti();
+	int offset = 10*1280 + 0*100 + 1280*100*1;
+	int offset_sprite = 365 * 1280;
+	for(int j = 0; j < 220; j++){
+		for(int i = 0; i < 1235; i++){
+			image_buffer_pointer[offset+i+j*1280] = sprites[offset_sprite+i+j*1280];
+		}
+	}
+	Xil_DCacheFlush();
+	sleep(1);
+	while(1){
+		while(BTN_INTR_FLAG == false);
+		BTN_INTR_FLAG = false;
+		if (BTN_VAL == 16 || BTN_VAL == 2 || BTN_VAL == 4 || BTN_VAL == 8 || BTN_VAL == 1){
+			break;
+		}
+	}
+}
+
+void drawDefeat()
+{
+	int offset = 10*1280 + 0*100 + 1280*100*1;
+	int offset_sprite = 185 * 1280;
+	for(int j = 0; j < 170; j++){
+		for(int i = 0; i < 1235; i++){
+			image_buffer_pointer[offset+i+j*1280] = sprites[offset_sprite+i+j*1280];
+		}
+	}
+	Xil_DCacheFlush();
+	sleep(1);
+	while(1){
+		while(BTN_INTR_FLAG == false);
+		BTN_INTR_FLAG = false;
+		if (BTN_VAL == 16 || BTN_VAL == 2 || BTN_VAL == 4 || BTN_VAL == 8 || BTN_VAL == 1){
+			break;
+		}
+	}
+}
+
+
+
