@@ -74,6 +74,20 @@ extern volatile int TcpSlowTmrFlag;
 static struct netif server_netif;
 struct netif *echo_netif;
 
+extern int playing_game;
+int sending = 0;
+
+struct tcp_pcb send_pcb;
+struct tcp_pcb* test_pcb;
+int send_pcb_initialized = 0;
+
+int send_count = 0;
+uint8_t thing = 0x00;
+extern int msg_received;
+extern int recv_x;
+extern int recv_y;
+extern char recv_result;
+
 void
 print_ip(char *msg, ip_addr_t *ip)
 {
@@ -91,27 +105,11 @@ print_ip_settings(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
 	print_ip("Gateway : ", gw);
 }
 
-
-// stuff I added
-//XGpio BTNInst;
-//XScuGic INTCInst;
-//static int btn_value;
-//volatile int BUTTON_INTR_FLAG = 0;
-int sending = 0;
-
-struct tcp_pcb send_pcb;
-struct tcp_pcb* test_pcb;
-int send_pcb_initialized = 0;
-
-int send_count = 0;
-uint8_t thing = 0x00;
-
-int transfer_data(int x, int y) {
+int send_coords(int x, int y) {
 	if (send_pcb_initialized) {
-//		char msg[] = "test1\n\r";
 		char x_char = '0' + x;
 		char y_char = '0' + y;
-		char msg[] = {x_char, ',', y_char, '\n', '\r', '\0'};
+		char msg[] = {'c', x_char, y_char, '\0'};
 
 		if (strlen(msg) > tcp_sndbuf(test_pcb))
 		{
@@ -120,7 +118,7 @@ int transfer_data(int x, int y) {
 		}
 		else
 		{
-//			xil_printf("Tx: %s\n\r", msg);
+			xil_printf("Tx: %s\n\r", msg);
 			err_t err = tcp_write(test_pcb, msg, strlen(msg), 1);
 
 			if (err != ERR_OK) {
@@ -128,12 +126,70 @@ int transfer_data(int x, int y) {
 				return 1;
 			}
 
-//			err = tcp_output(test_pcb);
-//			if (err != ERR_OK) {
-//				xil_printf("ERROR on tcp_output()\n\r");
-//				return 1;
-//			}
+			err = tcp_output(test_pcb);
+			if (err != ERR_OK) {
+				xil_printf("ERROR on tcp_output()\n\r");
+				return 1;
+			}
 
+		}
+
+	}
+	return 0;
+}
+
+int send_result(char res) {
+	if (send_pcb_initialized) {
+		// char res_char = '0';
+
+		// switch(res){
+		// case 1:
+		// 	// Player 1 wins
+		// 	res_char = '1';
+		// 	break;
+		// case 2:
+		// 	// Player 2 wins
+		// 	res_char = '2';
+		// 	break;
+		// case 3:
+		// 	// Ship was hit
+		// 	res_char = 'h';
+		// 	break;
+		// case 4:
+		// 	// Ship was destroyed
+		// 	res_char = 'd';
+		// 	break;
+		// case 5:
+		// 	// Empty square
+		// 	res_char = 'e';
+		// 	break;
+		// default:
+		// 	//
+		// 	break;
+		// } // switch
+
+		char msg[] = {'r', res, '\0'};
+
+		if (strlen(msg) > tcp_sndbuf(test_pcb))
+		{
+			xil_printf("NOT ENOUGH SPACE IN BUFFER\n\r");
+			return 1;
+		}
+		else
+		{
+			xil_printf("Tx: %s\n\r", msg);
+			err_t err = tcp_write(test_pcb, msg, strlen(msg), 1);
+
+			if (err != ERR_OK) {
+				xil_printf("ERROR on tcp_write()\n\r");
+				return 1;
+			}
+
+			err = tcp_output(test_pcb);
+			if (err != ERR_OK) {
+				xil_printf("ERROR on tcp_output()\n\r");
+				return 1;
+			}
 
 		}
 
@@ -196,6 +252,23 @@ err_t recv_callback(void *arg, struct tcp_pcb *tpcb,
 		xil_printf("Initializing pcb for replies\n\r");
 	} else {
 		xil_printf("Rx : %s\n\r", p->payload);
+		if (playing_game) {
+			char* msg = (char*)(malloc(p->len));
+			memcpy(msg, p->payload, p->len);
+			
+			if (msg[0] == 'r') {
+				// result of move
+				recv_result = msg[1];
+				msg_received = 1;
+			} else if (msg[0] == 'c'){
+				// x,y coord
+				char x_char = msg[1];
+				char y_char = msg[2];
+				recv_x = x_char - '0';
+				recv_y = y_char - '0';
+				msg_received = 1;
+			}
+		}
 	}
 
 	/* may need to check if there is space in buffer, should perform a check like below */
@@ -309,7 +382,7 @@ int start_application(char player, ip_addr_t* ipaddr)
 }
 
 
-int eth_init()
+int eth_init(char player)
 {
 #if LWIP_IPV6==0
 //	ip_addr_t ipaddr, netmask, gw;
@@ -338,87 +411,65 @@ int eth_init()
 
 	// ABOVE FROM AUDIO LAB TEST
 
+
+
 	// START
-	u8 input = 0x00;
-	xil_printf("Press 's' to begin\n\r");
-	while(input != 's') {
-			while (!XUartPs_IsReceiveData(UART_BASEADDR));
-			input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
-	}
-	input = 0x00;
+//	u8 input = 0x00;
+//	xil_printf("Press 's' to begin\n\r");
+//	while(input != 's') {
+//			while (!XUartPs_IsReceiveData(UART_BASEADDR));
+//			input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
+//	}
+//	input = 0x00;
 
 	init_platform();
 
 //	/* initialize IP addresses to be used */
-//	IP4_ADDR(&ipaddr,  192, 168,   1, 10);
-//	IP4_ADDR(&netmask, 255, 255, 255,  0);
-//	IP4_ADDR(&gw,      192, 168,   1,  1);
-
-	/* initialize IP addresses to be used */
-//	IP4_ADDR(&ipaddr,  169, 254,  50, 34);
-//	IP4_ADDR(&netmask, 255, 255,   0,  0);
-//	IP4_ADDR(&gw,      192, 168,   1,  1);
-
 	IP4_ADDR(&player1_ipaddr,  192, 168,   1, 10);
 	IP4_ADDR(&player2_ipaddr,  192, 168,   1, 11);
 
-	IP4_ADDR(&player1_ipaddr,  169, 254,  58, 38);
+//	IP4_ADDR(&player1_ipaddr,  169, 254,  58, 38);
 //	IP4_ADDR(&player1_ipaddr,  169, 254,  58, 93);
-	IP4_ADDR(&player2_ipaddr,  169, 254,  58, 34);
-	IP4_ADDR(&netmask, 255, 255,   0,  0);
+//	IP4_ADDR(&player2_ipaddr,  169, 254,  58, 34);
+//	IP4_ADDR(&netmask, 255, 255,   0,  0);
 
-//	IP4_ADDR(&netmask, 255, 255, 255,  0);
+	IP4_ADDR(&netmask, 255, 255, 255,  0);
 	IP4_ADDR(&gw,      192, 168,   1,  1);
 
 	lwip_init();
 
+	switch(player){
+	case '1':
+		/* Add network interface to the netif_list, and set it as default */
+		if (!xemac_add(echo_netif, &player1_ipaddr, &netmask,
+							&gw, player1_mac_address,
+							PLATFORM_EMAC_BASEADDR)) {
+			xil_printf("Error adding N/W interface\n\r");
+			return -1;
+		}
+		print_ip_settings(&player1_ipaddr, &netmask, &gw);
+		break;
+	case '2':
+		/* Add network interface to the netif_list, and set it as default */
+		if (!xemac_add(echo_netif, &player2_ipaddr, &netmask,
+							&gw, player2_mac_address,
+							PLATFORM_EMAC_BASEADDR)) {
+			xil_printf("Error adding N/W interface\n\r");
+			return -1;
+		}
+		print_ip_settings(&player2_ipaddr, &netmask, &gw);
+		break;
+	default:
+		if (!xemac_add(echo_netif, &player1_ipaddr, &netmask,
+							&gw, player1_mac_address,
+							PLATFORM_EMAC_BASEADDR)) {
+			xil_printf("Error adding N/W interface\n\r");
+			return -1;
+		}
+		print_ip_settings(&player1_ipaddr, &netmask, &gw);
+		break;
+	} // switch
 
-	u8 player = 0x00;
-	u8 quit = 0x00;
-	u32 CntrlRegister;
-
-	CntrlRegister = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_CR_OFFSET);
-
-	XUartPs_WriteReg(UART_BASEADDR, XUARTPS_CR_OFFSET,
-				  ((CntrlRegister & ~XUARTPS_CR_EN_DIS_MASK) |
-				   XUARTPS_CR_TX_EN | XUARTPS_CR_RX_EN));
-
-	// ask for user input to determine player 1 or 2
-	xil_printf("PLAYER 1 will wait for connection as master\n\r");
-	xil_printf("PLAYER 2 will connect to the master zedboard\n\r");
-	xil_printf("Enter '1' or '2'\n\r");
-	while(!quit) {
-		while (!XUartPs_IsReceiveData(UART_BASEADDR));
-		player = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
-		// Select function based on UART input
-		switch(player){
-		case '1':
-			/* Add network interface to the netif_list, and set it as default */
-			if (!xemac_add(echo_netif, &player1_ipaddr, &netmask,
-								&gw, player1_mac_address,
-								PLATFORM_EMAC_BASEADDR)) {
-				xil_printf("Error adding N/W interface\n\r");
-				return -1;
-			}
-			print_ip_settings(&player1_ipaddr, &netmask, &gw);
-			quit = 1;
-			break;
-		case '2':
-			/* Add network interface to the netif_list, and set it as default */
-			if (!xemac_add(echo_netif, &player2_ipaddr, &netmask,
-								&gw, player2_mac_address,
-								PLATFORM_EMAC_BASEADDR)) {
-				xil_printf("Error adding N/W interface\n\r");
-				return -1;
-			}
-			print_ip_settings(&player2_ipaddr, &netmask, &gw);
-			quit = 1;
-			break;
-		default:
-			xil_printf("Invalid input, enter '1' or '2'\n\r");
-			break;
-		} // switch
-	}
 
 	netif_set_default(echo_netif);
 
@@ -430,12 +481,13 @@ int eth_init()
 
 
 	xil_printf("Configured as player %c\n\r", player);
-	xil_printf("Press 's' to start application...\n\r");
-
-	while (input != 's') {
-		while (!XUartPs_IsReceiveData(UART_BASEADDR));
-		input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
-	}
+//	xil_printf("Press 's' to start application...\n\r");
+//
+//	u8 input = 0x00;
+//	while (input != 's') {
+//		while (!XUartPs_IsReceiveData(UART_BASEADDR));
+//		input = XUartPs_ReadReg(UART_BASEADDR, XUARTPS_FIFO_OFFSET);
+//	}
 
 	/* start the application */
 	if (player == '1') {
@@ -443,45 +495,6 @@ int eth_init()
 	} else {
 		start_application(player, &player1_ipaddr);
 	}
-
-//	int count = 0;
-//	int send_results = 0;
-//	/* receive and process packets */
-//	while (1) {
-//		if (TcpFastTmrFlag) {	// 250ms
-//			tcp_fasttmr();
-//			TcpFastTmrFlag = 0;
-//
-//			if (count == 4) {
-//				count = 0;
-//				send_results = 1;
-//			}
-//			count++;
-//		}
-//		if (TcpSlowTmrFlag) {	// 500ms
-//			tcp_slowtmr();
-//			TcpSlowTmrFlag = 0;
-//
-//		}
-//		xemacif_input(echo_netif);
-//
-////		if (send_results == 1) {
-////			send_results = 0;
-////			transfer_data();
-////		}
-//
-//		if (BUTTON_INTR_FLAG && send_results == 1) {
-//			BUTTON_INTR_FLAG = 0;
-//
-//			if (btn_value == 1) {
-//				send_results = 0;
-//				transfer_data();
-//			}
-//		}
-//	}
-
-	/* never reached */
-//	cleanup_platform();
 
 	return 0;
 }
@@ -501,21 +514,3 @@ void eth_loop()
 	xemacif_input(echo_netif);
 
 }
-
-//void BTN_Intr_Handler(void *InstancePtr)
-//{
-//	// Disable GPIO interrupts
-//	XGpio_InterruptDisable(&BTNInst, BTN_INT);
-//	// Ignore additional button presses
-//	if ((XGpio_InterruptGetStatus(&BTNInst) & BTN_INT) !=
-//			BTN_INT) {
-//			return;
-//		}
-//	btn_value = XGpio_DiscreteRead(&BTNInst, 1);
-//	BUTTON_INTR_FLAG = 1;
-//	// Increment counter based on button value
-//    (void)XGpio_InterruptClear(&BTNInst, BTN_INT);
-//    // Enable GPIO interrupts
-//    XGpio_InterruptEnable(&BTNInst, BTN_INT);
-//}
-

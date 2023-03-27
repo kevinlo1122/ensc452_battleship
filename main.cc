@@ -79,7 +79,7 @@ int * board					= (int *)0x028A4010;
 int * sprites				= (int *)0x0308D014;
 int * confetti				= (int *)0x03876018;
 
-char player = 1;
+char player = '0';
 int msg_received = 0;
 int playing_game = 0;
 
@@ -207,6 +207,7 @@ void initEthernet()
 {
 	// Connect to other board
 	eth_init(player);
+	eth_loop();
 	return;
 }
 
@@ -379,7 +380,7 @@ void playSinglePlayerGame()
 	bool game_end = false;
 
 	while(true){
-		if(player == 1){
+		if(player == '1'){
 			if(game_end) break;
 			send_attack_offline(enemy_ships, enemy_placement, &game_end, my_ships);
 
@@ -413,13 +414,13 @@ void playMultiplayerGame()
 
 	// take turns shooting
 	while(true){
-		if(player == 1){
+		if(player == '1'){
 			if(game_end) break;
 			send_attack(enemy_ships, enemy_placement, &game_end);
 			if(game_end) break;
 			receive_attack(my_ships);
 		}
-		else if(player == 2){
+		else if(player == '2'){
 			if(game_end) break;
 			receive_attack(my_ships);
 			if(game_end) break;
@@ -606,6 +607,7 @@ char attackPos(ship* ships, coord coord)
 					if(ships[i].lives <= 0){
 						ships[i].is_destroyed = true;
 						xil_printf("A ship has been destroyed!\n\r");
+						drawLives(ships[i].type);
 					}
 
 					return ships[i].type;
@@ -684,11 +686,11 @@ void displayPlayerSelection()
 		while(BTN_INTR_FLAG == false);
 		BTN_INTR_FLAG = false;
 		if (BTN_VAL == 4){			// left (player 1)
-			player = 1;
+			player = '1';
 			return;
 		}
 		else if (BTN_VAL == 8){		// right (player 2)
-			player = 2;
+			player = '2';
 			return;
 		}
 	}
@@ -750,6 +752,7 @@ void getShipPos(ship* ship, char* board)
 	while(true) {
 		while(BTN_INTR_FLAG == false){
 			PS_BTN_VAL = XGpioPs_ReadPin(&GPIO_PS, PBSW);
+			if (player != '0') eth_loop();
 			if (PS_BTN_VAL == 1 && valid) {
 				for(int i = 0; i < ship->size; i++){
 					xil_printf("%d, %d \r\n" ,ship->coords[i].x, ship->coords[i].y);
@@ -1012,7 +1015,6 @@ void drawSinkingShip(coord* coords, int type, int size)
 			usleep(85000);
 		}
 	}
-	drawLives(type);
 }
 
 void drawConfetti()
