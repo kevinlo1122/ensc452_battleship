@@ -236,6 +236,7 @@ int displayMainMenu()
 	memcpy(image_buffer_pointer, main_menu, NUM_BYTES_BUFFER);
 	int cursor = 0;
 	updateCursorMainMenu(cursor);
+	FLAG = 0;
 
 	while(true) {
 		while(BTN_INTR_FLAG == false);
