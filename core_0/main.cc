@@ -15,6 +15,7 @@
 #include "platform.h"
 #include "platform_config.h"
 #include "ethernet.h"
+#include "xbasic_types.h"
 
 
 
@@ -87,10 +88,15 @@ int playing_game = 0;
 char recv_result;
 int recv_x = 0;
 int recv_y = 0;
+bool eth_initialized = false;
+int volume = 4;
 
 coord curr;
 
 char* my_placements;
+
+int last_hit_bot = 0;
+Xuint32 *baseaddr_p = (Xuint32 *)XPAR_MY_RNG_0_S00_AXI_BASEADDR;
 
 //----------------------------------------------------
 // FUNCTION PROTOTYPES
@@ -113,7 +119,7 @@ coord getAttackPos();
 char attackPos(ship* ships, coord coord);
 bool isDestroyed(ship* ships);
 void send_attack(int* enemy_ships, coord* enemy_placement, bool* game_end);
-void receive_attack(ship* my_ships);
+void receive_attack(ship* my_ships, bool* game_end);
 void send_attack_offline(int* enemy_ships, coord* enemy_placement, bool* game_end, ship* my_ships);
 void receive_attack_offline(ship* my_ships);
 
@@ -122,6 +128,9 @@ void updateCursorMainMenu(int cursor);
 void updateCursorOptions(int cursor);
 int displayMainMenu();
 void displayOptionsMenu();
+void displayVolumeBar();
+void clearVolumeBar();
+void adjustVolume();
 void displayPlayerSelection();
 void drawBox(int offset, int color, bool cross);
 void drawShipBox(ship ship, int color);
@@ -135,6 +144,13 @@ void drawVictory();
 void drawDefeat();
 void drawLives(int type);
 
+uint32_t RNG(int* x, int* y);
+void setupShips_BOT(ship* ships, char* board);
+void getShipPos_BOT(ship* ship, char* board);
+bool updateShip_BOT(ship* ship, bool horizontal, char* board);
+void receive_attack_BOT(ship* my_ships, bool* game_end);
+void send_attack_BOT(ship* my_ships, bool* game_end, char* attack_history, coord* last_hit);
+char attackPos_BOT(ship* ships, coord coord);
 
 
 
@@ -292,7 +308,7 @@ void displayOptionsMenu()
 		else if (BTN_VAL == 1){		// center
 			usleep(BTN_DELAY);
 			if(cursor == 0){				// sound
-				continue;
+				adjustVolume();
 			}
 			else if (cursor == 1){			// back
 				for(int k = 0; k < 2; k++){
@@ -310,6 +326,65 @@ void displayOptionsMenu()
 				return;
 			}
 		}
+	}
+}
+
+void displayVolumeBar() {
+	// each volume bar set at [LEFT_MOST_PIXEL] + volume*100
+	// volume bar 700 pixels wide
+
+	int offset = 500*1280 + 300;
+	for(int i = 0; i < 30; i++){
+		for (int j = 0; j < 100*volume; j++) {
+			image_buffer_pointer[offset + j + i*1280] = WHITE;
+		}
+
+		for (int j = 100*volume + 1; j < 700; j++) {
+			image_buffer_pointer[offset + j + i*1280] = BLACK;
+		}
+	}
+	Xil_DCacheFlush();
+}
+
+void clearVolumeBar() {
+	// each volume bar set at [LEFT_MOST_PIXEL] + volume*100
+	// volume bar 700 pixels wide
+	int offset = 500*1280 + 300;
+	for(int i = 0; i < 30; i++){
+		for (int j = 0; j < 700; j++) {
+			image_buffer_pointer[offset + j + i*1280] = BLACK;
+		}
+	}
+	Xil_DCacheFlush();
+}
+
+void adjustVolume() {
+	displayVolumeBar();
+	FLAG = 1;
+	while(true) {
+		while(BTN_INTR_FLAG == false);
+		BTN_INTR_FLAG = false;
+
+		if (BTN_VAL == 8){ 		// right
+			if (volume < 7) {
+				FLAG = 64;
+				volume++;
+			}
+		}
+		else if (BTN_VAL == 4){ 	// left
+			if (volume > 1) {
+				FLAG = 128;
+				volume--;
+			}
+		}
+		else if (BTN_VAL == 1){		// center
+			usleep(BTN_DELAY);
+			FLAG = 0;
+			clearVolumeBar();
+			return;
+		}
+		displayVolumeBar();
+		usleep(BTN_DELAY);
 	}
 }
 
@@ -372,6 +447,33 @@ void playSinglePlayerGame()
 	// toggle sound
 	FLAG = 1;
 
+    // memory for ship and board (bot)
+    ship* bot_ships = (ship*) malloc(NUM_SHIPS*sizeof(ship));
+    char* bot_placements = (char*) malloc(10*10*sizeof(char));
+    memset(bot_placements, 0, 10*10*sizeof(char));
+    coord* player_placement = (coord*) malloc(5*5*sizeof(coord));
+    memset(player_placement, 0, 5*5*sizeof(coord));
+    char* attack_history = (char*) malloc(10*10*sizeof(char));
+    memset(attack_history, 0, 10*10*sizeof(char));
+    coord last_hit;
+    last_hit.x = -1;
+    last_hit.y = -1;
+    // toggle sound
+    // place ships
+    setupShips_BOT(bot_ships, bot_placements);
+    for(int i = 0; i < 10; ++i){
+            for(int j = 0; j < 10; ++j){
+                    xil_printf("%d   ", bot_placements[i*10 + j]);
+            }
+            xil_printf("\n\r");
+    FLAG = 1;
+    }
+    xil_printf("\n\n\n\r");
+    // reset RNG for player input
+    *(baseaddr_p) = 0x11111111;
+    usleep(100);
+    *(baseaddr_p) = 0x11110000;
+
 	// memory for ship and board
 	ship* my_ships = (ship*) malloc(NUM_SHIPS*sizeof(ship));
 	my_placements = (char*) malloc(10*10*sizeof(char));
@@ -386,13 +488,18 @@ void playSinglePlayerGame()
 	bool game_end = false;
 
 	memset(my_placements, 0, 10*10*sizeof(char));
-	while(true) {
+	while(true){
 //		if(player == '0'){
-//			if(game_end) break;
-//			send_attack_offline(enemy_ships, enemy_placement, &game_end, my_ships);
+			if(game_end) break;
+			// reset RNG for player input
+			*(baseaddr_p) = 0x11111111;
+			usleep(100);
+			*(baseaddr_p) = 0x11110000;
+			send_attack_offline(enemy_ships, enemy_placement, &game_end, bot_ships);
+
+			if(game_end) break;
+			send_attack_BOT(my_ships, &game_end, attack_history, &last_hit);
 //		}
-		if(game_end) break;
-		send_attack_offline(enemy_ships, enemy_placement, &game_end, my_ships);
 	}
 
 	free(my_placements);
@@ -401,7 +508,7 @@ void playSinglePlayerGame()
 void playMultiplayerGame()
 {
 	// initalize connection after choosing player number
-	initEthernet();
+//	initEthernet();
 
 	// toggle sound
 	FLAG = 1;
@@ -432,11 +539,11 @@ void playMultiplayerGame()
 			if(game_end) break;
 			send_attack(enemy_ships, enemy_placement, &game_end);
 			if(game_end) break;
-			receive_attack(my_ships);
+			receive_attack(my_ships, &game_end);
 		}
 		else if(player == '2'){
 			if(game_end) break;
-			receive_attack(my_ships);
+			receive_attack(my_ships, &game_end);
 			if(game_end) break;
 			send_attack(enemy_ships, enemy_placement, &game_end);
 		}
@@ -504,7 +611,7 @@ void send_attack(int* enemy_ships, coord* enemy_placement, bool* game_end)
 
 }
 
-void receive_attack(ship* my_ships)
+void receive_attack(ship* my_ships, bool* game_end)
 {
 	while(!msg_received) eth_loop();
 	msg_received = 0;
@@ -515,6 +622,7 @@ void receive_attack(ship* my_ships)
 
 	if(isDestroyed(my_ships)){
 		send_result('W');
+		*game_end = true;
 		drawDefeat();
 	}
 	else{
@@ -588,9 +696,45 @@ void receive_attack_offline(ship* my_ships)
 	coord target;
 	target.x = recv_x;
 	target.y = recv_y;
+	char result = attackPos_BOT(my_ships, target);
+
+	if(isDestroyed(my_ships)){
+		recv_result = 'W';
+	}
+	else{
+		recv_result = result;
+	}
+}
+
+void send_attack_BOT(ship* my_ships, bool* game_end, char* attack_history, coord* last_hit)
+{
+	//coord target;
+	int tries = 0;
+	do{
+		RNG(&recv_x, &recv_y);
+		if (tries++ > 150){
+			do{
+				recv_x = last_hit_bot % 10;
+				recv_y = last_hit_bot / 10;
+				last_hit_bot++;
+			}while(attack_history[10*recv_x + recv_y] == 1);
+		}
+		xil_printf("%d, %d   %d \r\n", recv_x, recv_y, attack_history[10*recv_x + recv_y]);
+	}while(attack_history[10*recv_x + recv_y] == 1 || recv_x > 9 || recv_y > 9);
+
+	attack_history[10*recv_x + recv_y] = 1;
+	receive_attack_BOT(my_ships, game_end);
+}
+
+void receive_attack_BOT(ship* my_ships, bool* game_end)
+{
+	coord target;
+	target.x = recv_x;
+	target.y = recv_y;
 	char result = attackPos(my_ships, target);
 
 	if(isDestroyed(my_ships)){
+		*game_end = true;
 		recv_result = 'W';
 		drawDefeat();
 	}
@@ -624,6 +768,41 @@ char attackPos(ship* ships, coord coord)
 						ships[i].is_destroyed = true;
 						xil_printf("A ship has been destroyed!\n\r");
 						drawLives(ships[i].type);
+					}
+
+					return ships[i].type;
+				}
+
+			}
+		}
+	}
+	return 0;
+}
+
+char attackPos_BOT(ship* ships, coord coord)
+{
+	// check if attack coord is occupied
+	// update values
+	// return 0 if miss, type if hit
+
+	xil_printf("%d, %d is attacked\r\n", coord.x, coord.y);
+	for (int i = 0; i < NUM_SHIPS; i++)
+	{
+		for(int j = 0; j < ships[i].size; j++){
+			if(ships[i].coords[j].x == coord.x && ships[i].coords[j].y == coord.y){
+				if(ships[i].hit_coord[j].x == coord.x && ships[i].hit_coord[j].y == coord.y){	// already hit
+					xil_printf("Tile already hit!\n\r");
+					return 255;
+				}
+				else{
+					xil_printf("A ship has been hit\n\r");
+					ships[i].lives--;
+					ships[i].hit_coord[j].x = coord.x;
+					ships[i].hit_coord[j].y = coord.y;
+
+					if(ships[i].lives <= 0){
+						ships[i].is_destroyed = true;
+						xil_printf("A ship has been destroyed!\n\r");
 					}
 
 					return ships[i].type;
@@ -707,13 +886,18 @@ void displayPlayerSelection()
 		BTN_INTR_FLAG = false;
 		if (BTN_VAL == 4){			// left (player 1)
 			player = '1';
-			return;
+//			return;
+			break;
 		}
 		else if (BTN_VAL == 8){		// right (player 2)
 			player = '2';
-			return;
+//			return;
+			break;
 		}
 	}
+
+	initEthernet();
+	eth_initialized = true;
 }
 
 void setupShips(ship* ships, char* board)
@@ -1013,7 +1197,7 @@ void drawMiss(coord coords)
 void drawHit(coord coords)
 {
 	FLAG = 2;
-	int rand_num = rand() % 2;
+    int rand_num = RNG(NULL,NULL) % 2;
 	int offset = 147 + 13*1280 + coords.x*100 + 1280*100*coords.y;
 	for(int j = 0; j < 95; j++){
 		for(int i = 0; i < 95; i++){
@@ -1190,6 +1374,116 @@ void drawLives(int type)
 
 }
 
+uint32_t RNG(int* x, int* y)
+{
+
+	uint32_t a;
+	a = *(baseaddr_p+1);
+
+	uint32_t u;
+	u = a & 0b1111000;
+	u = u >> 4;
+	*x = ((int) u) % 10 ;
+
+	uint32_t l;
+	l = a & 0b00001111;
+	*y = ((int) l) % 10;
+
+	//xil_printf("%d, %d  \n\r",u, l);
+
+	return a;
+}
+
+void setupShips_BOT(ship* ships, char* board)
+{
+	// use buttons to get placements NOPE
+	// write to board for visuals NOPE
+	int types[5] = {ID_CARRIER, ID_BATTLESHIP, ID_CRUISER, ID_SUBMARINE, ID_DESTROYER};
+	int size[5] = {SIZE_CARRIER, SIZE_BATTLESHIP, SIZE_CRUISER, SIZE_SUBMARINE, SIZE_DESTROYER};
+	int lives[5] = {SIZE_CARRIER, SIZE_BATTLESHIP, SIZE_CRUISER, SIZE_SUBMARINE, SIZE_DESTROYER};
+
+	for(int i = 0; i < NUM_SHIPS; i++){
+		ships[i].type = types[i];
+		ships[i].size = size[i];
+		ships[i].lives = lives[i];
+		ships[i].is_destroyed = false;
+		for(int j = 0; j < 5; j++){
+			ships[i].coords[j].x = -1;
+			ships[i].coords[j].y = -1;
+			ships[i].hit_coord[j].x = -1;
+			ships[i].hit_coord[j].y = -1;
+		}
+		getShipPos_BOT(&ships[i], board);
+	}
+}
+
+void getShipPos_BOT(ship* ship, char* board)
+{
+	bool valid = true;
+	bool horizontal = true;
+
+	// starting at 0,0, set first coord to 0,0
+	ship->coords[0].x = 0;
+	ship->coords[0].y = 0;
+	valid = updateShip_BOT(ship, horizontal, board);
+
+	while(true) {
+		RNG(&ship->coords[0].x, &ship->coords[0].y);
+		if (RNG(NULL, NULL) % 2 == 1){
+			horizontal = !horizontal;
+		}
+		valid = updateShip_BOT(ship, RNG(NULL,NULL) % 2, board);
+		if (valid) {
+			for(int i = 0; i < ship->size; i++){
+				xil_printf("valid: %d, %d \r\n" ,ship->coords[i].x, ship->coords[i].y);
+				board[10*ship->coords[i].y + ship->coords[i].x] = 1;
+			}
+			break;
+		}
+	}
+}
+
+bool updateShip_BOT(ship* ship, bool horizontal, char* board)
+{
+	int x = 0;
+	int y = 0;
+	int z = 0;
+	bool valid = true;
+
+	if (horizontal){
+		for(int i = 0; i < ship->size; i++){
+			z = ship->coords[0].x + i;
+			if (z > 9  || (board[z+10*ship->coords[0].y] != 0)){
+				valid = false;
+			}
+		}
+		for(int i = 1; i < ship->size; i++){
+			x = ship->coords[0].x + i;
+			x = x % 10;
+			ship->coords[i].x = x;
+			ship->coords[i].y = ship->coords[0].y;
+		}
+		usleep(BTN_DELAY);
+	}
+	else{
+		for(int i = 0; i < ship->size; i++){
+			z = ship->coords[0].y + i;
+			if (z > 9 || (board[ship->coords[0].x+10*z] != 0)){
+				valid = false;
+			}
+		}
+		for(int i = 1; i < ship->size; i++){
+			y = ship->coords[0].y + i;
+			y = y % 10;
+			ship->coords[i].y = y;
+			ship->coords[i].x = ship->coords[0].x;
+		}
+		usleep(BTN_DELAY);
+	}
+	return valid;
+}
+
+
 
 //----------------------------------------------------
 // MAIN FUNCTION
@@ -1197,6 +1491,10 @@ void drawLives(int type)
 int main (void)
 {
 	int status = 0;
+
+    // start RNG
+    *(baseaddr_p) = 0x11110000;
+
 
 	// UART
 	initUART();
@@ -1214,6 +1512,9 @@ int main (void)
 	status = initIntcFunction(INTC_DEVICE_ID, &BTN_INST);
 	if(status != XST_SUCCESS) return XST_FAILURE;
 
+    // Platform
+    init_platform();
+
 	// VGA
 	initVGA();
 
@@ -1225,7 +1526,8 @@ int main (void)
 			playSinglePlayerGame();
 			break;
 		case 1:		// multiplayer
-			displayPlayerSelection();
+			if (!eth_initialized)
+				displayPlayerSelection();
 			playMultiplayerGame();
 			break;
 		case 2:		// options

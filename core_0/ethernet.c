@@ -71,6 +71,8 @@ struct netif *echo_netif;
 struct tcp_pcb send_pcb;
 struct tcp_pcb* test_pcb;
 int send_pcb_initialized = 0;
+int platform_initialized = 0;
+int platform_interrupts_enabled = 0;
 
 extern int playing_game;
 extern int msg_received;
@@ -359,13 +361,18 @@ int eth_init(char player)
 
 	echo_netif = &server_netif;
 
-	init_platform();
-
 //	/* initialize IP addresses to be used */
 	IP4_ADDR(&player1_ipaddr,  192, 168,   1, 10);
 	IP4_ADDR(&player2_ipaddr,  192, 168,   1, 11);
 	IP4_ADDR(&netmask, 255, 255, 255,  0);
 	IP4_ADDR(&gw,      192, 168,   1,  1);
+
+	if (!platform_initialized) {
+		xil_printf("Initializing platform from eth_init() %d\n\r", platform_initialized);
+		init_platform();
+
+		platform_initialized = 1;
+	}
 
 	lwip_init();
 
@@ -405,7 +412,11 @@ int eth_init(char player)
 	netif_set_default(echo_netif);
 
 	/* now enable interrupts */
-	platform_enable_interrupts();
+	if (!platform_interrupts_enabled) {
+		xil_printf("Enabling interrupts %d\n\r", platform_interrupts_enabled);
+		platform_enable_interrupts();
+		platform_interrupts_enabled = 1;
+	}
 
 	/* specify that the network if is up */
 	netif_set_up(echo_netif);

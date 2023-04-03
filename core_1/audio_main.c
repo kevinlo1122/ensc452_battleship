@@ -51,7 +51,7 @@ int main()
 
 	// Main audio stuff
 	int sampling_rate = 22050;
-	int amp = 8;
+	int amp = 32;
 
 	int* bg_track = (int*) BACKGROUND_TRACK_ADDR;
 	int* victory_track = (int*) VICTORY_TRACK_ADDR;
@@ -127,12 +127,19 @@ int main()
 						j = 0;
 						FLAG = 1;
 					}
+					break;
 				case 64:	// volume up
-					if (amp < 64)
+					if (amp < 256) {
 						amp = amp * 2;
+						FLAG = 1;
+					}
+					break;
 				case 128:	// volume down
-					if (amp > 1)
+					if (amp > 4) {
 						amp = amp / 2;
+						FLAG = 1;
+					}
+					break;
 				default:
 					break;
 				} // switch
