@@ -96,6 +96,8 @@ coord curr;
 char* my_placements;
 
 int last_hit_bot = 0;
+bool bot_hit_ship = false;
+
 Xuint32 *baseaddr_p = (Xuint32 *)XPAR_MY_RNG_0_S00_AXI_BASEADDR;
 
 //----------------------------------------------------
@@ -122,6 +124,13 @@ void send_attack(int* enemy_ships, coord* enemy_placement, bool* game_end);
 void receive_attack(ship* my_ships, bool* game_end);
 void send_attack_offline(int* enemy_ships, coord* enemy_placement, bool* game_end, ship* my_ships);
 void receive_attack_offline(ship* my_ships);
+uint32_t RNG(int* x, int* y);
+void setupShips_BOT(ship* ships, char* board);
+void getShipPos_BOT(ship* ship, char* board);
+bool updateShip_BOT(ship* ship, bool horizontal, char* board);
+void receive_attack_BOT(ship* my_ships, bool* game_end);
+void send_attack_BOT(ship* my_ships, bool* game_end, char* attack_history, coord* last_hit);
+char attackPos_BOT(ship* ships, coord coord);
 
 // display and animations
 void updateCursorMainMenu(int cursor);
@@ -143,15 +152,6 @@ void drawConfetti();
 void drawVictory();
 void drawDefeat();
 void drawLives(int type);
-
-uint32_t RNG(int* x, int* y);
-void setupShips_BOT(ship* ships, char* board);
-void getShipPos_BOT(ship* ship, char* board);
-bool updateShip_BOT(ship* ship, bool horizontal, char* board);
-void receive_attack_BOT(ship* my_ships, bool* game_end);
-void send_attack_BOT(ship* my_ships, bool* game_end, char* attack_history, coord* last_hit);
-char attackPos_BOT(ship* ships, coord coord);
-
 
 
 //----------------------------------------------------
@@ -458,7 +458,7 @@ void playSinglePlayerGame()
     coord last_hit;
     last_hit.x = -1;
     last_hit.y = -1;
-    // toggle sound
+
     // place ships
     setupShips_BOT(bot_ships, bot_placements);
     for(int i = 0; i < 10; ++i){
@@ -817,8 +817,8 @@ char attackPos_BOT(ship* ships, coord coord)
 coord getAttackPos()
 {
 	coord coords;
-	coords.x = 0;
-	coords.y = 0;
+	coords.x = curr.x;
+	coords.y = curr.y;
 	updateCrosshair(coords);
 	while(true) {
 		while(BTN_INTR_FLAG == false);
@@ -895,6 +895,9 @@ void displayPlayerSelection()
 			break;
 		}
 	}
+
+	if (eth_initialized)
+		return;
 
 	initEthernet();
 	eth_initialized = true;
@@ -1521,13 +1524,15 @@ int main (void)
 	int choice = 0;
 	while(true){
 		choice = displayMainMenu();
+		curr.x = 0;
+		curr.y = 0;
 		switch(choice){
 		case 0:		// single player
 			playSinglePlayerGame();
 			break;
 		case 1:		// multiplayer
-			if (!eth_initialized)
-				displayPlayerSelection();
+//			if (!eth_initialized)
+			displayPlayerSelection();
 			playMultiplayerGame();
 			break;
 		case 2:		// options

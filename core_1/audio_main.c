@@ -3,7 +3,6 @@
 #include "xil_printf.h"
 #include <sleep.h>
 #include "xil_io.h"
-//#include "adventures_with_ip.h"
 #include "audio.h"
 
 // FLAG bit usage for sound effects and background tracks:
@@ -49,7 +48,7 @@ int main()
 	//enables the HP jack too.
 	AudioConfigureJacks();
 
-	// Main audio stuff
+	// Main audio parameters
 	int sampling_rate = 22050;
 	int amp = 32;
 
